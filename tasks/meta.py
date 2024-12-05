@@ -10,7 +10,7 @@ def refresh_meta_token():
     # Initialize task-specific logger
     logger = setup_task_logger("meta_refresh_token")
 
-    logger.info("Starting 'refresh_meta_token' task.")
+    logger.info("Starting 'refresh_meta_token' task. 🏁")
     try:
         mysql_db = MySQLSessionLocal()
 
@@ -21,11 +21,13 @@ def refresh_meta_token():
 
         # get all access tokens for the platform
         tokens = get_access_tokens(mysql_db, platform.id)
+        logger.info("Getting all access tokens for Meta platform.")
 
         data = []
         for token in tokens:
             # refresh the token
             response = refresh_token(token.token)
+            logger.info("Refreshing token for user_id {token.user_id}...")
 
             if response.get("error"):
                 logger.error(f"Error refreshing token from user_id {token.user_id} 😡: {response.get('error').get('message')}")
@@ -46,7 +48,7 @@ def refresh_meta_token():
 
         # update the tokens
         batch_update_user_credentials(mysql_db, data)
-        logger.info(f"{len(data)} tokens updated 👍. Data: {data}")
+        logger.info(f"{len(data)} tokens updated 👍.")
 
         mysql_db.close()
 
@@ -58,7 +60,7 @@ def check_meta_token_validity():
     # Initialize task-specific logger
     logger = setup_task_logger("meta_check_token_validity")
 
-    logger.info("Starting 'check_meta_token_validity' task.")
+    logger.info("Starting 'check_meta_token_validity' task. 🏁")
 
     try:
       mysql_db = MySQLSessionLocal()
@@ -70,6 +72,7 @@ def check_meta_token_validity():
 
       # get all access tokens for the platform
       tokens = get_access_tokens(mysql_db, platform.id)
+      logger.info("Getting all access tokens for Meta platform.")
       
       data = []
       for token in tokens:
@@ -103,7 +106,7 @@ def check_meta_token_validity():
 
       # update the tokens
       batch_update_user_credentials(mysql_db, data)
-      logger.info(f"{len(data)} tokens updated 👍. Data: {data}")
+      logger.info(f"{len(data)} tokens' flag updated 👍.")
 
       mysql_db.close()
 

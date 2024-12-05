@@ -2,8 +2,8 @@ import os
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_NAME: str = "Ad Account API"
-    VERSION: str = "1.0.0"
+    APP_NAME: str = "Scheduler"
+    VERSION: str = "2.0.0"
     SECRET_KEY: str = "supersecretkey"
 
     MYSQL_USER: str = "root"

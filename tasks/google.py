@@ -10,7 +10,7 @@ def refresh_google_ads_token():
     # Initialize task-specific logger
     logger = setup_task_logger("google_ads_refresh_token")
 
-    logger.info("Starting 'refresh_google_ads_token' task.")
+    logger.info("Starting 'refresh_google_ads_token' task 🏁.")
 
     try:
 
@@ -23,11 +23,13 @@ def refresh_google_ads_token():
 
       # get all access tokens for the platform
       tokens = get_access_tokens(mysql_db, platform.id)
+      logger.info("Getting all access tokens for Google Ads platform.")
 
       data = []
       for token in tokens:
           # refresh the token
           response = refresh_token(token.refresh_token)
+          logger.info(f"Refreshing token for user_id {token.user_id}...")
 
           if not response:
               logger.error(f"Error refreshing token from user_id {token.user_id} 😡")
@@ -48,7 +50,7 @@ def refresh_google_ads_token():
 
       # update the tokens
       batch_update_user_credentials(mysql_db, data)
-      logger.info(f"{len(data)} tokens updated 👍. Data: {data}")
+      logger.info(f"{len(data)} tokens updated 👍.")
 
       mysql_db.close()
 
@@ -60,7 +62,7 @@ def check_google_ads_token_validity():
     # Initialize task-specific logger
     logger = setup_task_logger("google_ads_check_token_validity")
 
-    logger.info("Starting 'check_google_ads_token_validity' task.")
+    logger.info("Starting 'check_google_ads_token_validity' task 🏁.")
 
     try:
       mysql_db = MySQLSessionLocal()
@@ -72,6 +74,7 @@ def check_google_ads_token_validity():
 
       # get all access tokens for the platform
       tokens = get_access_tokens(mysql_db, platform.id)
+      logger.info("Getting all access tokens for Google Ads platform.")
       
       data = []
       for token in tokens:
@@ -101,7 +104,7 @@ def check_google_ads_token_validity():
 
       # update the tokens
       batch_update_user_credentials(mysql_db, data)
-      logger.info(f"{len(data)} tokens updated 👍. Data: {data}")
+      logger.info(f"{len(data)} tokens' flag updated 👍.")
       
       mysql_db.close()
 
@@ -113,7 +116,7 @@ def refresh_google_analytics_token():
     # Initialize task-specific logger
     logger = setup_task_logger("google_analytics_refresh_token")
 
-    logger.info("Starting 'refresh_google_analytics_token' task.")
+    logger.info("Starting 'refresh_google_analytics_token' task. 🏁")
 
     try:
       mysql_db = MySQLSessionLocal()
@@ -125,11 +128,13 @@ def refresh_google_analytics_token():
 
       # get all access tokens for the platform
       tokens = get_access_tokens(mysql_db, platform.id)
+      logger.info("Getting all access tokens for Google Analytics platform.")
 
       data = []
       for token in tokens:
           # refresh the token
           response = refresh_token(token.refresh_token)
+          logger.info(f"Refreshing token for user_id {token.user_id}...")
 
           if not response:
               logger.error(f"Error refreshing token from user_id {token.user_id} 😡")
@@ -150,7 +155,7 @@ def refresh_google_analytics_token():
 
       # update the tokens
       batch_update_user_credentials(mysql_db, data)
-      logger.info(f"{len(data)} tokens updated 👍. Data: {data}")
+      logger.info(f"{len(data)} tokens updated 👍.")
 
       mysql_db.close()
 
@@ -162,7 +167,7 @@ def check_google_analytics_token_validity():
     # Initialize task-specific logger
     logger = setup_task_logger("google_analytics_check_token_validity")
 
-    logger.info("Starting 'check_google_analytics_token_validity' task.")
+    logger.info("Starting 'check_google_analytics_token_validity' task. 🏁")
 
     try:
       mysql_db = MySQLSessionLocal()
@@ -174,6 +179,7 @@ def check_google_analytics_token_validity():
 
       # get all access tokens for the platform
       tokens = get_access_tokens(mysql_db, platform.id)
+      logger.info("Getting all access tokens for Google Analytics platform.")
       
       data = []
       for token in tokens:
@@ -203,7 +209,7 @@ def check_google_analytics_token_validity():
 
       # update the tokens
       batch_update_user_credentials(mysql_db, data)
-      logger.info(f"{len(data)} tokens updated 👍. Data: {data}")
+      logger.info(f"{len(data)} tokens' flag updated 👍.")
       
       mysql_db.close()
 

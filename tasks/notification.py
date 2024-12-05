@@ -10,6 +10,7 @@ import traceback
 import math
 from utils.email import send_batch_emails
 from config import settings
+from utils.logging import setup_task_logger
 
 ENV = "testing"
 BATCH_SIZE = 100  # Define the number of users per batch
@@ -24,14 +25,21 @@ def notification_user_tokens_exp():
     """
     Notify users about expired tokens.
     """
+    # Initialize task-specific logger
+    logger = setup_task_logger("token_expired_notification")
+
+    logger.info("Starting 'notification_user_tokens_exp' task. 🏁")
+
     try:
         mysql_db = MySQLSessionLocal()
 
         # Notify Meta token expiration
         tokens = get_all_access_tokens(mysql_db)
+        logger.info("Getting all access tokens.")
 
         users = []
 
+        logger.info("Checking token expiry for all users...")
         for token in tokens:
             account_type = token.account_type
 
@@ -144,12 +152,14 @@ def notification_user_tokens_exp():
             user for user in users_grouped.values()
         ]
 
+        logger.info(f"Found {len(list_users)} users with expired tokens. Notifying users...")
         notify_users_in_batches(list_users)
+        logger.info("Token expiration notification completed. 😉")
 
         mysql_db.close()
     except Exception as e:
         traceback.print_exc()
-        print(f"An error occurred when notifying users about expired tokens 😡: {e}")
+        logger.error(f"An error occurred when notifying users about token expiration 😡: {e}")
 
 def batch_users(users, batch_size):
     """

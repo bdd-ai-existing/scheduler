@@ -12,7 +12,7 @@ def refresh_shopee_token():
     # Initialize task-specific logger
     logger = setup_task_logger("shopee_refresh_token")
 
-    logger.info("Starting 'refresh_shopee_token' task.")
+    logger.info("Starting 'refresh_shopee_token' task. 🏁")
 
     try:
       mysql_db = MySQLSessionLocal()
@@ -52,7 +52,7 @@ def refresh_shopee_token():
 
       # update the tokens
       batch_update_user_credentials(mysql_db, data)
-      logger.info(f"{len(data)} tokens updated 👍. Data: {data}")
+      logger.info(f"{len(data)} tokens updated 👍.")
 
       mysql_db.close()
 
@@ -64,7 +64,7 @@ def check_shopee_token_validity():
     # Initialize task-specific logger
     logger = setup_task_logger("shopee_check_token_validity")
 
-    logger.info("Starting 'check_shopee_token_validity' task.")
+    logger.info("Starting 'check_shopee_token_validity' task. 🏁")
     
     try:
       mysql_db = MySQLSessionLocal()
@@ -110,7 +110,7 @@ def check_shopee_token_validity():
 
       # update the tokens
       batch_update_user_credentials(mysql_db, data)
-      logger.info(f"{len(data)} tokens updated 👍. Data: {data}")
+      logger.info(f"{len(data)} tokens updated 👍.")
 
       mysql_db.close()
 

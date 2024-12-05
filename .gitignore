@@ -133,3 +133,5 @@ cache/
 
 # Task-specific caches or artifacts
 tasks/__pycache__/
+
+.DS_Store
