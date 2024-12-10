@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from db.models_mysql import UserAdAccountCredentialInformation, AccountPlatform, AccountConfiguration, User
+from db.models_mysql import UserAdAccountCredentialInformation, AccountPlatform, AccountConfiguration, User, UserAdAccountInformation
 import sqlalchemy as sa
 
 def get_access_tokens(db: Session, account_type: int):
@@ -89,3 +89,25 @@ def get_all_access_tokens(db: Session):
         ).fetchall()
     except Exception as e:
         raise Exception(f"Error fetching all Meta access tokens: {e}")
+    
+def get_account_id_and_access_token_by_platform_id(db: Session, platform_id: int):
+    try:
+        return db.execute(
+            sa.select(
+                sa.distinct(UserAdAccountInformation.account_id).label('account_id'),  # Ensure unique account IDs
+                UserAdAccountCredentialInformation.token
+            ).join(
+                AccountConfiguration,
+                UserAdAccountInformation.account_id == AccountConfiguration.account_id
+            ).join(
+                UserAdAccountCredentialInformation,
+                sa.and_(
+                    AccountConfiguration.account_type == UserAdAccountCredentialInformation.account_type,
+                    UserAdAccountCredentialInformation.flag == 1  # Valid tokens only
+                )
+            ).where(
+                AccountConfiguration.account_type == platform_id
+            )
+        ).fetchall()
+    except Exception as e:
+        raise Exception(f"Error fetching Meta account ID and access token: {e}")

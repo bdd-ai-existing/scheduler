@@ -1,6 +1,6 @@
 
 import sys
-from tasks.meta import refresh_meta_token, check_meta_token_validity
+from tasks.meta import refresh_meta_token, check_meta_token_validity, daily_fetch_data_meta
 from tasks.google import refresh_google_ads_token, check_google_ads_token_validity, refresh_google_analytics_token, check_google_analytics_token_validity
 from tasks.shopee import refresh_shopee_token, check_shopee_token_validity
 from tasks.notification import notification_user_tokens_exp
@@ -11,6 +11,7 @@ def main():
   mapFn = {
       "refresh_meta_token": refresh_meta_token,
       "check_meta_token_validity": check_meta_token_validity,
+      "meta_daily_fetch": daily_fetch_data_meta,
 
       "refresh_google_ads_token": refresh_google_ads_token,
       "check_google_ads_token_validity": check_google_ads_token_validity,
