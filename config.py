@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "supersecretkey"
 
     MYSQL_USER: str = "root"
-    MYSQL_PASSWORD: str = "password"
+    MYSQL_PASSWORD: str = ""
     MYSQL_HOST: str = "localhost"
     MYSQL_NAME: str = "ad_accounts"
 
@@ -56,10 +56,16 @@ class Settings(BaseSettings):
     GOOGLE_ANALYTICS_BINDING_URL: str = "https://binding.com"
     SHOPEE_BINDING_URL: str = "https://binding.com"
 
-    LOG_DIR: str = "./"
-
     SMTP_USER: str = "the@sender.com"
     SMTP_PASSWORD: str = "thesecret"
+
+    MONGODB_USER: str = "root"
+    MONGODB_PASS: str = "password"
+    MONGODB_HOST: str = "localhost"
+    MONGODB_PORT: str = "27017"
+    MONGODB_NAME: str = "scheduler"
+
+    LOG_DIR: str = "./"
 
     @property
     def DATABASE_URL(self):
