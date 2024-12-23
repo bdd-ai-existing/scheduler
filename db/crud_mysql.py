@@ -95,7 +95,8 @@ def get_account_id_and_access_token_by_platform_id(db: Session, platform_id: int
         return db.execute(
             sa.select(
                 sa.distinct(UserAdAccountInformation.account_id).label('account_id'),  # Ensure unique account IDs
-                UserAdAccountCredentialInformation.token
+                UserAdAccountCredentialInformation.token,
+                UserAdAccountCredentialInformation.refresh_token
             ).join(
                 AccountConfiguration,
                 UserAdAccountInformation.account_id == AccountConfiguration.account_id
