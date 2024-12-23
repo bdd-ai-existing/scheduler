@@ -21,3 +21,9 @@ def platform_name_correction_reverse(
     platform_name = "googleAnalytics"
 
   return platform_name
+
+
+def split_list(lst, chunk_size):
+    """Split a list into smaller chunks of specified size."""
+    for i in range(0, len(lst), chunk_size):
+        yield lst[i:i + chunk_size]
