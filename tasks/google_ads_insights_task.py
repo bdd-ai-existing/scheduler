@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import traceback
 from datetime import datetime, timedelta
 from pymongo import ReplaceOne
@@ -11,12 +12,15 @@ from schemas.google_ads_schema import GoogleAdsInsightData, GoogleAdsInsight
 from db.crud_mongodb import upsert_bulk_insights
 import json
 
-async def fetch_and_store_google_ads_insights(level, scheduler_type: str = None, batch_size=10):
+
+async def fetch_and_store_google_ads_insights(level, scheduler_type: str = None, batch_size=10, max_workers=5):
     """
-    Fetch and store Google Ads insights for accounts.
+    Fetch and store Google Ads insights for accounts with batch processing and thread pooling.
+
     :param level: The granularity level ('account', 'campaign', 'ad').
     :param scheduler_type: Scheduler type, e.g., 'live'.
     :param batch_size: Number of accounts to process in a batch.
+    :param max_workers: Maximum number of threads for concurrent execution.
     """
     logger = setup_task_logger("fetch_and_store_google_ads_insights")
 
@@ -31,23 +35,28 @@ async def fetch_and_store_google_ads_insights(level, scheduler_type: str = None,
         logger.error(f"Error fetching accounts from SQL: {e}")
         return
 
-    # Step 2: Batch process accounts
     async def process_batch(account_batch):
+        """
+        Process a batch of accounts concurrently.
+        """
         date = {
             "date_start": (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"),
             "date_end": datetime.now().strftime("%Y-%m-%d"),
-            # "date_start": "2024-02-01",
-            # "date_end": "2024-02-28",
         }
 
-        for account in account_batch:
+        bulk_operations = []
+
+        def process_account(account):
+            """
+            Process a single account to fetch and transform insights.
+            """
             try:
                 account_id, token, refresh_token = account.account_id, account.token, account.refresh_token
 
                 # Initialize Google Ads client
                 google_ads_client = get_google_ads_client(account_id, token, refresh_token)
 
-                # Step 3: Fetch Google Ads metrics for the account
+                # Fetch Google Ads metrics
                 metrics_data = fetch_google_ads_metrics(
                     client=google_ads_client,
                     customer_id=account_id,
@@ -59,48 +68,63 @@ async def fetch_and_store_google_ads_insights(level, scheduler_type: str = None,
 
                 logger.info(f"Fetched {len(metrics_data)} insights for account {account_id}.")
 
-                # Step 4: Transform and prepare documents
-                bulk_operations = []
+                # Prepare bulk operations
+                local_bulk_operations = []
                 for insight in metrics_data:
                     data_metrics = GoogleAdsInsightData(
                         channel_type=insight.get("campaign", {}).get("advertising_channel_type", None),
                         **insight.get("metrics", {}),
                     )
-                    
-                    """
-                      check all value in data, if all value is 0 in data_metrics except in objective key, skip this record
-                    """
+
+                    # Skip records with all zero values in data_metrics
                     if all(value == 0 for key, value in data_metrics.dict().items() if key != "channel_type"):
                         continue
 
                     replacement = GoogleAdsInsight(
-                      channel_type=insight.get("campaign", {}).get("advertising_channel_type", None),
-                      account_id=account_id, 
-                      campaign_id=str(insight.get("campaign", {}).get("id", None)),
-                      campaign_name=insight.get("campaign", {}).get("name", None),
-                      date=insight.get("segments", {}).get("date"),
-                      data=data_metrics
+                        channel_type=insight.get("campaign", {}).get("advertising_channel_type", None),
+                        account_id=account_id,
+                        campaign_id=str(insight.get("campaign", {}).get("id", None)),
+                        campaign_name=insight.get("campaign", {}).get("name", None),
+                        date=insight.get("segments", {}).get("date"),
+                        data=data_metrics
                     ).dict()
 
                     filter = {"account_id": account_id, "date": datetime.strptime(insight.get("segments", {}).get("date"), "%Y-%m-%d")}
 
-                    bulk_operations.append(
-                      ReplaceOne(
-                        filter=filter,
-                        replacement=replacement,
-                        upsert=True
-                      ) 
+                    local_bulk_operations.append(
+                        ReplaceOne(
+                            filter=filter,
+                            replacement=replacement,
+                            upsert=True
+                        )
                     )
 
-                # Execute bulk upsert
-                if bulk_operations:
-                    upsert_bulk_insights(f"google_ads_insights_{level}" if not scheduler_type else f"google_ads_insights_{level}_{scheduler_type}", bulk_operations)
-
-                    logger.info(f"Upserted {len(bulk_operations)} insights for account_id {account_id}.")
+                return local_bulk_operations
 
             except Exception as e:
-                traceback.print_exc()
-                logger.error(f"Error processing account {account_id}: {e}")
+                logger.error(f"Error processing account {account.account_id}: {e}")
+                return []
 
-    # Step 5: Batch processing
+        # Use ThreadPoolExecutor to process accounts in the batch concurrently
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(process_account, account): account for account in account_batch}
+
+            for future in as_completed(futures):
+                try:
+                    account_bulk_operations = future.result()
+                    bulk_operations.extend(account_bulk_operations)
+                except Exception as e:
+                    account = futures[future]
+                    logger.error(f"Error processing account {account.account_id}: {e}")
+
+        # Execute bulk upsert for the entire batch
+        if bulk_operations:
+            upsert_bulk_insights(
+                f"google_ads_insights_{level}" if not scheduler_type else f"google_ads_insights_{level}_{scheduler_type}",
+                bulk_operations
+            )
+            logger.info(f"Upserted {len(bulk_operations)} insights to MongoDB.")
+
+    # Step 2: Execute batch processing
     await batch_processor(accounts, process_batch, batch_size=batch_size)
+    logger.info("Completed fetching and storing Google Ads insights.")
