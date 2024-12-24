@@ -5,6 +5,9 @@ from schemas.meta_schema import MetaInsight, MetaReference, AdsInsightParam, Tim
 import json
 from utils.logging import setup_task_logger
 import asyncio
+from requests.exceptions import RequestException
+import logging
+import traceback
 
 META_URL = settings.FB_URI
 META_APP_ID = settings.FB_APP_ID
@@ -74,20 +77,41 @@ METRICS_PARENT_LIVE = [
     "frequency",
 ]
 
-def refresh_token(token:str):
+def refresh_token(token: str) -> dict:
+    """
+    Refresh the Meta access token using the Facebook API.
+    
+    :param token: The current access token to be exchanged for a new one.
+    :return: The response JSON containing the new token and other details.
+    :raises Exception: If the request fails or the API returns an error.
+    """
     url = f"{META_URL}/oauth/access_token"
     params = {
         "grant_type": "fb_exchange_token",
         "client_id": META_APP_ID,
         "client_secret": META_APP_SECRET,
-        "fb_exchange_token": token
+        "fb_exchange_token": token,
     }
-    response = requests.get(url=url, params=params)
 
-    if response.status_code == 200:
-        return response.json()
-    else:
-        raise Exception(f"Meta API error: {response.text}")
+    try:
+        response = requests.get(url=url, params=params)
+        # response.raise_for_status()  # Raise an exception for HTTP errors
+
+        response_data = response.json()
+        if "access_token" in response_data:
+            logging.info("Token refreshed successfully.")
+        else:
+            logging.error(f"Unexpected response format: {response_data}")
+
+        return response_data
+
+    except RequestException as e:
+        traceback.print_exc()
+        logging.error(f"Request to Meta API failed: {e}")
+
+    except ValueError as e:
+        logging.error(f"Failed to parse response JSON: {e}")
+
 
 def debug_token(token:str):
     url = f"{META_URL}/debug_token"

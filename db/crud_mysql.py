@@ -58,17 +58,31 @@ def get_ad_account_platform_by_id(db: Session, platform_id: int):
         raise Exception(f"Error fetching Meta platform: {e}")
     
 def batch_update_user_credentials(db: Session, data: list):
+    """
+    Batch update user credentials in the database.
+    :param db: Database session.
+    :param data: List of dictionaries containing update records with `id` and other fields.
+    """
+    if not data:
+        return
+
     try:
-        for record in data:
-            update_values = {key: value for key, value in record.items() if key != "id"}
-            db.execute(
-                sa.update(UserAdAccountCredentialInformation)
-                .where(UserAdAccountCredentialInformation.id == record["id"])
-                .values(**update_values)
-            )
+        # Generate bulk update statements
+        update_statements = [
+            sa.update(UserAdAccountCredentialInformation)
+            .where(UserAdAccountCredentialInformation.id == record["id"])
+            .values(**{key: value for key, value in record.items() if key != "id"})
+            for record in data
+        ]
+
+        # Execute all updates in a single transaction
+        for stmt in update_statements:
+            db.execute(stmt)
+
         db.commit()
     except Exception as e:
         db.rollback()
+        raise Exception(f"Error during batch update: {e}")
     finally:
         db.close()
 
