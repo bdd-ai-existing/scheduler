@@ -164,9 +164,9 @@ def fetch_meta_insight_from_reference_id(reference_id, token):
 
     return data
 
-async def fetch_meta_insights(report_id, token):
+def fetch_meta_insights(report_id, token):
     """
-    Fetch insights for a completed async job using requests within an async context.
+    Fetch insights for a completed async job using requests.
     :param report_id: The report_run_id from the async job.
     :param token: The access token for the Meta API.
     :return: A list of all insights data across all pages.
@@ -177,8 +177,8 @@ async def fetch_meta_insights(report_id, token):
 
     while url:
         try:
-            # Run requests.get in a thread pool to keep the function asynchronous
-            response = await asyncio.to_thread(requests.get, url, headers=headers)
+            # Synchronous HTTP request
+            response = requests.get(url, headers=headers)
             response.raise_for_status()
             data = response.json()
 

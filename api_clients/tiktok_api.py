@@ -1,11 +1,12 @@
 import requests
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
-import json
-from config import settings
-from utils.utils import split_list
 from collections import defaultdict
+from utils.utils import split_list
+from utils.logging import setup_task_logger
+from config import settings
+import json
+import time
 
 TIKTOK_URL = settings.TIKTOK_URI
 TIKTOK_VER = settings.TIKTOK_VER
@@ -275,61 +276,167 @@ METRICS_PARENT_LIVE = [
     "ix_page_viewrate_avg",
 ]
 
-def fetch_single_chunk(account_id, token, dimensions, metrics, data_level, date, retries=3):
-    """
-    Fetch a single metrics chunk with retry logic.
-    """
-    url = f"{TIKTOK_URL}/{TIKTOK_VER}/report/integrated/get"
-    headers = {"Access-Token": token, "Content-Type": "application/json"}
-    params = {
-        "advertiser_id": account_id,
-        "report_type": 'BASIC',
-        "dimensions": json.dumps(dimensions),
-        "data_level": data_level,
-        "start_date": date.get("date_start"),
-        "end_date": date.get("date_end"),
-        "service_type": 'AUCTION',
-        "query_mode": 'CHUNK',
-        "metrics": json.dumps(metrics),
-        "page_size": 1000
-    }
 
-    all_data = []
-    next_page = None
+logger = setup_task_logger("tiktok_metrics")
 
+# Helper to determine dimensions, metrics, and unique keys based on level
+def get_level_config(level, is_live):
+    if level == 'account':
+        data_level = 'AUCTION_ADVERTISER'
+        dimensions = ["advertiser_id", "stat_time_day"] if not is_live else ["advertiser_id"]
+        unique_keys = ["advertiser_id", "stat_time_day"] if not is_live else ["advertiser_id"]
+        metrics_parent = METRICS_PARENT_LIVE if is_live else METRICS_PARENT
+    elif level == 'campaign':
+        data_level = 'AUCTION_CAMPAIGN'
+        dimensions = ["campaign_id", "stat_time_day"] if not is_live else ["campaign_id"]
+        unique_keys = ["campaign_id", "stat_time_day"] if not is_live else ["campaign_id"]
+        metrics_parent = METRICS_PARENT_LIVE if is_live else METRICS_PARENT
+    elif level == 'ad':
+        data_level = 'AUCTION_AD'
+        dimensions = ["ad_id", "stat_time_day"] if not is_live else ["ad_id"]
+        unique_keys = ["ad_id", "stat_time_day"] if not is_live else ["ad_id"]
+        metrics_parent = METRICS_PARENT_LIVE if is_live else METRICS_PARENT
+    else:
+        raise ValueError("Invalid level specified. Choose from 'account', 'campaign', or 'ad'.")
+    
+    metrics = [
+        m for m in metrics_parent
+        if m not in ["advertiser_id", "campaign_id", "campaign_name", "adgroup_id", "adgroup_name", "ad_id", "ad_name"]
+    ]
+    return data_level, dimensions, unique_keys, metrics
+
+# Helper to handle rate limits and retries
+def fetch_with_rate_limit(url, headers, params, retries=3):
     for attempt in range(retries):
         try:
-            while True:
-                if next_page:
-                    params["page"] = next_page
+            response = requests.get(url, headers=headers, params=params)
 
+            if response.status_code == 429:  # Rate limit
+                retry_after = int(response.headers.get("Retry-After", 10))
+                logger.warning(f"Rate limit hit. Retrying after {retry_after} seconds...")
+                time.sleep(retry_after)
+                continue
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.RequestException as e:
+            logger.error(f"Error fetching data: {e}. Retry attempt {attempt + 1}")
+            time.sleep(2 ** attempt)  # Exponential backoff
+    return {}
+
+# Main function to fetch TikTok metrics
+async def fetch_tiktok_metrics(account_id, token, level, date, is_live=False):
+    try:
+        data_level, dimensions, unique_keys, metrics = get_level_config(level, is_live)
+
+        # Split metrics into manageable chunks
+        metric_chunks = list(split_list(metrics, 50))
+        all_data = []
+
+        url = f"{TIKTOK_URL}/{TIKTOK_VER}/report/integrated/get"
+        headers = {"Access-Token": token, "Content-Type": "application/json"}
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [
+                executor.submit(
+                    fetch_with_rate_limit,
+                    url,
+                    headers,
+                    {
+                        "advertiser_id": account_id,
+                        "report_type": 'BASIC',
+                        "dimensions": json.dumps(dimensions),
+                        "data_level": data_level,
+                        "start_date": date.get("date_start"),
+                        "end_date": date.get("date_end"),
+                        "service_type": 'AUCTION',
+                        "query_mode": 'CHUNK',
+                        "metrics": json.dumps(chunk),
+                        "page_size": 1000
+                    },
+                )
+                for chunk in metric_chunks
+            ]
+
+            for future in as_completed(futures):
+                try:
+                    response_data = future.result()
+                    if "data" in response_data and "list" in response_data["data"]:
+                        all_data.extend(response_data["data"]["list"])
+                except Exception as e:
+                    logger.error(f"Error processing chunk: {e}")
+
+        # Group and merge metrics
+        merged_data = group_and_merge_metrics(all_data, unique_keys)
+        return merged_data
+
+    except Exception as e:
+        logger.error(f"Error fetching TikTok metrics for account {account_id}: {e}")
+        return []
+
+# Group and merge metrics by unique keys
+def group_and_merge_metrics(data, unique_keys):
+    grouped_data = defaultdict(dict)
+
+    for record in data:
+        # Generate a unique key based on unique_keys
+        key = tuple(record.get('dimensions', {}).get(k) for k in unique_keys)
+        for k, v in record.items():
+            if k == 'metrics':
+                grouped_data[key][k] = {**grouped_data[key].get(k, {}), **v}
+            else:
+                grouped_data[key][k] = v
+
+    return list(grouped_data.values())
+
+def fetch_content_details(advertiser_id, ids, endpoint, token, retries=3):
+    """
+    Fetch video or image details using GET with advertiser_id.
+    :param advertiser_id: TikTok advertiser ID.
+    :param ids: List of IDs to fetch details for.
+    :param endpoint: API endpoint for fetching content (e.g., file/video/ad/info or file/image/ad/info).
+    :param token: TikTok access token.
+    :param retries: Number of retries in case of errors.
+    """
+    url = f"{TIKTOK_URL}/{TIKTOK_VER}/{endpoint}"
+    headers = {"Access-Token": token}
+    results = []
+
+    # Ensure no None values in IDs
+    ids = [str(id) for id in ids if id]
+
+    for chunk in split_list(ids, 20):  # Batch size of 50 IDs
+        for attempt in range(retries):
+            try:
+                if 'image' in endpoint:
+                  params = {
+                      "advertiser_id": advertiser_id,
+                      "image_ids": json.dumps(chunk),  # Join IDs into a comma-separated string
+                  }
+                else:
+                  params = {
+                      "advertiser_id": advertiser_id,
+                      "video_ids": json.dumps(chunk),  # Join IDs into a comma-separated string
+                  }
                 response = requests.get(url, headers=headers, params=params)
-                
-                # Rate limit handling
+
+                # Handle rate limit
                 if response.status_code == 429:
                     retry_after = int(response.headers.get("Retry-After", 10))
                     print(f"Rate limit hit. Retrying after {retry_after} seconds...")
                     time.sleep(retry_after)
-                    continue  # Retry immediately
+                    continue
 
-                response.raise_for_status()
+                response.raise_for_status()  # Raise exception for HTTP errors
                 data = response.json()
+                results.extend(data.get("data", []).get("list", []))
+                break
+            except requests.RequestException as e:
+                print(f"Error fetching content info for chunk {chunk}: {e}. Retry attempt {attempt + 1}...")
+                time.sleep(2 ** attempt)  # Exponential backoff
 
-                if "data" in data and "list" in data["data"]:
-                    all_data.extend(data["data"]["list"])
-                    next_page = data["data"].get("page_info", {}).get("next_page")
-                    if not next_page:
-                        break
-                else:
-                    print(f"Unexpected response format: {data}")
-                    break
-
-            return all_data
-
-        except requests.RequestException as e:
-            print(f"Error: {e}. Retry attempt {attempt + 1}...")
-            time.sleep(2 ** attempt)  # Exponential backoff
-    return []
+    return results
 
 def fetch_ads_data(account_id, token, retries=3):
     """
@@ -381,147 +488,3 @@ def fetch_ads_data(account_id, token, retries=3):
             print(f"Error fetching ads data: {e}. Retry attempt {attempt + 1}...")
             time.sleep(2 ** attempt)  # Exponential backoff
     return []
-
-def fetch_content_details(advertiser_id, ids, endpoint, token, retries=3):
-    """
-    Fetch video or image details using GET with advertiser_id.
-    :param advertiser_id: TikTok advertiser ID.
-    :param ids: List of IDs to fetch details for.
-    :param endpoint: API endpoint for fetching content (e.g., file/video/ad/info or file/image/ad/info).
-    :param token: TikTok access token.
-    :param retries: Number of retries in case of errors.
-    """
-    url = f"{TIKTOK_URL}/{TIKTOK_VER}/{endpoint}"
-    headers = {"Access-Token": token}
-    results = []
-
-    # Ensure no None values in IDs
-    ids = [str(id) for id in ids if id]
-
-    for chunk in split_list(ids, 20):  # Batch size of 50 IDs
-        for attempt in range(retries):
-            try:
-                if 'image' in endpoint:
-                  params = {
-                      "advertiser_id": advertiser_id,
-                      "image_ids": json.dumps(chunk),  # Join IDs into a comma-separated string
-                  }
-                else:
-                  params = {
-                      "advertiser_id": advertiser_id,
-                      "video_ids": json.dumps(chunk),  # Join IDs into a comma-separated string
-                  }
-                response = requests.get(url, headers=headers, params=params)
-
-                # Handle rate limit
-                if response.status_code == 429:
-                    retry_after = int(response.headers.get("Retry-After", 10))
-                    print(f"Rate limit hit. Retrying after {retry_after} seconds...")
-                    time.sleep(retry_after)
-                    continue
-
-                response.raise_for_status()  # Raise exception for HTTP errors
-                data = response.json()
-                results.extend(data.get("data", []).get("list", []))
-                break
-            except requests.RequestException as e:
-                print(f"Error fetching content info for chunk {chunk}: {e}. Retry attempt {attempt + 1}...")
-                time.sleep(2 ** attempt)  # Exponential backoff
-
-    return results
-
-def group_and_merge_metrics(data, unique_keys):
-    """
-    Group and merge metrics by unique keys.
-    :param data: List of dictionaries containing chunked metrics.
-    :param unique_keys: List of keys used to identify unique records (e.g., campaign_id, stat_time_day).
-    :return: Merged and grouped list of dictionaries.
-    """
-    grouped_data = defaultdict(dict)
-    
-    for record in data:
-        # Generate a unique key based on unique_keys
-        key = tuple(record.get('dimensions').get(k) for k in unique_keys)
-        key_name = key[0] + key[1] if len(key) > 1 else key[0]
-        
-        if key_name not in grouped_data:
-          grouped_data[key_name] = {}
-        for k, v in record.items():
-            if k == 'metrics':
-              if k not in grouped_data[key_name]:
-                  grouped_data[key_name][k] = v
-              grouped_data[key_name][k] = {
-                  **grouped_data[key_name][k],
-                  **v
-              }
-            else:
-              grouped_data[key_name][k] = v
-
-    return list(grouped_data.values())
-
-def fetch_tiktok_metrics(account_id: str, token: str, level: str, date: dict, is_live=False):
-    """
-    Fetch TikTok metrics for a given account with concurrency and rate limit handling.
-    """
-    # Determine dimensions and data level based on level
-    if level == 'account':
-      data_level = 'AUCTION_ADVERTISER'
-      dimensions = ["advertiser_id", "stat_time_day"]
-      metrics_parent =  METRICS_PARENT
-      unique_keys = ["advertiser_id", "stat_time_day"]
-
-      if is_live:
-        dimensions = ["advertiser_id"]
-        metrics_parent = METRICS_PARENT_LIVE
-        unique_keys = ["advertiser_id"]
-
-      metrics = [m for m in metrics_parent if m not in ["advertiser_id", "campaign_id", "campaign_name", "adgroup_id", "adgroup_name", "ad_id", "ad_name"]]
-    elif level == 'campaign':
-      data_level = 'AUCTION_CAMPAIGN'
-      dimensions = ["campaign_id", "stat_time_day"]
-      metrics_parent = METRICS_PARENT
-      unique_keys = ["campaign_id", "stat_time_day"]
-
-      if is_live:
-        dimensions = ["campaign_id"]
-        metrics_parent = METRICS_PARENT_LIVE
-        unique_keys = ["campaign_id"]
-      
-      metrics = [m for m in metrics_parent if m not in ["campaign_id", "adgroup_id", "adgroup_name", "ad_id", "ad_name"]]
-    elif level == 'ad':
-      data_level = 'AUCTION_AD'
-      dimensions = ["ad_id", "stat_time_day"]
-      metrics_parent = METRICS_PARENT
-      unique_keys = ["ad_id", "stat_time_day"]
-
-      if is_live:
-        dimensions = ["ad_id"]
-        metrics_parent = METRICS_PARENT_LIVE
-        unique_keys = ["ad_id"]
-      
-      metrics = [m for m in metrics_parent if m not in ["ad_id"]]
-    else:
-        raise ValueError("Invalid level specified. Choose from 'account', 'campaign', or 'ad'.")
-    
-    # Split metrics into chunks of 50
-    metric_chunks = list(split_list(metrics, 50))
-    all_data = []
-
-    with ThreadPoolExecutor(max_workers=5) as executor:  # Limit concurrency to avoid rate limits
-        futures = [
-            executor.submit(fetch_single_chunk, account_id, token, dimensions, chunk, data_level, date)
-            for chunk in metric_chunks
-        ]
-
-        for future in as_completed(futures):
-            try:
-                data = future.result()
-                all_data.extend(data)
-            except Exception as e:
-                print(f"Error processing a chunk: {e}")
-
-    # return all_data
-
-    # Group and merge metrics
-    merged_data = group_and_merge_metrics(all_data, unique_keys)
-    return merged_data
