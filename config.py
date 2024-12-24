@@ -61,7 +61,8 @@ class Settings(BaseSettings):
 
     MONGODB_USER: str = "root"
     MONGODB_PASS: str = "password"
-    MONGODB_HOST: str = "localhost"
+    MONGODB_HOST_PRIMARY: str = "localhost"
+    MONGODB_HOST_SECONDARY: str = "localhost"
     MONGODB_PORT: str = "27017"
     MONGODB_NAME: str = "scheduler"
 
