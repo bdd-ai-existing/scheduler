@@ -2,6 +2,7 @@ import requests
 from config import settings
 from google.ads.googleads.client import GoogleAdsClient
 from google.ads.googleads.errors import GoogleAdsException
+from utils.logging import setup_task_logger
 
 # Replace these with your credentials
 AUTH_URL = settings.GOOGLE_AUTH_URL
@@ -21,43 +22,56 @@ METRICS_PARENT = [
     "interactions",
 ]
 
-def debug_token(access_token):
-    # Check token validity
+def debug_token(access_token: str) -> bool:
+    """
+    Validate an access token by checking its validity against the token info endpoint.
+
+    :param access_token: The access token to be validated.
+    :return: True if the token is valid, False otherwise.
+    """
+    logger = setup_task_logger("google_ads_debug_token")
     token_info_url = f"{AUTH_URL}/tokeninfo"
-    params = {
-        "access_token": access_token
-    }
-    response = requests.get(token_info_url, params=params)
-    
-    
-    if response.status_code == 200:
-        # print("Access Token is valid.")
-        return True  # Return the valid token
-    else:
-        # print("Access Token is invalid or expired. Refreshing...")
+    params = {"access_token": access_token}
+
+    try:
+        response = requests.get(token_info_url, params=params, timeout=10)
+        response.raise_for_status()
+        logger.info("Access token is valid.")
+        return True
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Access token validation failed: {e}")
         return False
 
-def refresh_token(refresh_token):
-    # Endpoint to refresh token
+def refresh_token(refresh_token: str) -> dict:
+    """
+    Refresh an access token using the provided refresh token.
+
+    :param refresh_token: The refresh token used to generate a new access token.
+    :return: A dictionary containing the new token data, or None if the request fails.
+    """
+    logger = setup_task_logger("google_ads_refresh_token")
+
     token_url = f"{AUTH_URL}/token"
-    
-    # Data for the token refresh request
     payload = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
         "refresh_token": refresh_token,
         "grant_type": "refresh_token"
     }
-    
-    # Make the POST request
-    response = requests.post(token_url, data=payload)
-    if response.status_code == 200:
+
+    try:
+        response = requests.post(token_url, data=payload, timeout=10)
+        response.raise_for_status()
+
         token_data = response.json()
-        # new_access_token = token_data["access_token"]
-        # print("New Access Token:", token_data)
+        logger.info("Successfully refreshed token.")
         return token_data
-    else:
-        # print("Failed to refresh token:", response.json())
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to refresh token: {e}")
+        return None
+    except ValueError:
+        logger.error(f"Invalid JSON response while refreshing token: {response.text}")
         return None
 
 def get_google_ads_client(client_customer_id, access_token, refresh_token):
