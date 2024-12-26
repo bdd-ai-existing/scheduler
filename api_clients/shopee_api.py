@@ -5,6 +5,10 @@ import time
 import hmac
 import hashlib
 from datetime import datetime
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from utils.utils import split_list
 
 SHOPEEV2_BASE_URL = settings.SHOPEEV2_BASE_URL
 SHOPEEV2_BASE_URL_TEST = settings.SHOPEEV2_BASE_URL_TEST
@@ -58,7 +62,19 @@ def refresh_token(shop_id: int, env: str, refresh_token: str):
 
     return access_token, new_refresh_token, token_expiry
 
-async def fetch_order_list(access_token, shop_id, date_start, date_end):
+def get_session_with_retries():
+    session = requests.Session()
+    retries = Retry(
+        total=5,  # Retry up to 5 times
+        backoff_factor=1,  # Exponential backoff: 1, 2, 4, 8, ...
+        status_forcelist=[429, 500, 502, 503, 504],  # Retry on these HTTP statuses
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+def fetch_order_list(access_token, shop_id, date_start, date_end):
     """
     Fetch the list of orders from Shopee API within a given date range.
     """
@@ -67,35 +83,44 @@ async def fetch_order_list(access_token, shop_id, date_start, date_end):
 
     order_list = []
     cursor = None
+    session = get_session_with_retries()
 
     while True:
-        url, params = create_v2_signature(
-            path="/api/v2/order/get_order_list",
-            access_token=access_token,
-            shop_id=shop_id
-        )
-        params.update({
-            "time_from": from_time,
-            "time_to": to_time,
-            "page_size": 20,
-            "time_range_field": "create_time",
-        })
-        if cursor:
-            params["cursor"] = cursor
+        try:
+            url, params = create_v2_signature(
+                path="/api/v2/order/get_order_list",
+                access_token=access_token,
+                shop_id=shop_id
+            )
+            params.update({
+                "time_from": from_time,
+                "time_to": to_time,
+                "page_size": 20,
+                "time_range_field": "create_time",
+            })
+            if cursor:
+                params["cursor"] = cursor
 
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
+            response = session.get(url, params=params, timeout=10)  # Add timeout
+            response.raise_for_status()  # Raise HTTPError for bad responses
+            data = response.json()
 
-        if data.get("error"):
-            raise Exception(f"Error fetching order list: {data['error']}")
+            if data.get("error"):
+                raise Exception(f"Error fetching order list: {data['error']}")
 
-        order_list.extend(order["order_sn"] for order in data["response"].get("order_list", []))
+            order_list.extend(order["order_sn"] for order in data["response"].get("order_list", []))
 
-        if not data["response"].get("more"):
-            break
+            if not data["response"].get("more"):
+                break
 
-        cursor = data["response"].get("next_cursor")
+            cursor = data["response"].get("next_cursor")
+
+        except requests.exceptions.Timeout:
+            print("Request timed out. Retrying...")
+            continue  # Retry the same request
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed: {e}")
+            raise
 
     return order_list
 
@@ -173,3 +198,50 @@ def createv2Signature(path: str, access_token: str = None, shop_id: int = None, 
         }
 
     return url, params
+
+def fetch_order_details(access_token: str, shop_id: int, order_sn_list: list):
+    """
+    Fetch detailed information for a list of orders from Shopee API.
+    """
+    response_optional_fields = (
+        "order_sn,region,currency,cod,total_amount,order_status,shipping_carrier,payment_method," 
+        "estimated_shipping_fee,message_to_seller,create_time,update_time,days_to_ship,ship_by_date," 
+        "buyer_user_id,buyer_username,recipient_address,actual_shipping_fee,goods_to_declare,note," 
+        "note_update_time,item_list,pay_time,dropshipper,dropshipper_phone,split_up,buyer_cancel_reason," 
+        "cancel_by,cancel_reason,actual_shipping_fee_confirmed,buyer_cpf_id,fulfillment_flag," 
+        "pickup_done_time,package_list,invoice_data,checkout_shipping_carrier,reverse_shipping_fee," 
+        "order_chargeable_weight_gram"
+    )
+
+    list_order_detail = []
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {}
+        for order_sn_chunk in list(split_list(order_sn_list, 50)):
+            auth_url, params = create_v2_signature(
+                path="/api/v2/order/get_order_detail",
+                access_token=access_token,
+                shop_id=shop_id
+            )
+            params.update({
+                "order_sn_list": ",".join(order_sn_chunk),
+                "response_optional_fields": response_optional_fields,
+            })
+
+            futures[executor.submit(requests.get, auth_url, params=params)] = order_sn_chunk
+
+        for future in as_completed(futures):
+            try:
+                response = future.result()
+                response.raise_for_status()
+                resp = response.json()
+
+                if "response" in resp:
+                    list_order_detail.extend(resp["response"].get("order_list", []))
+                else:
+                    raise Exception(f"Error fetching details for chunk: {futures[future]} - {resp.get('error', 'Unknown error')}")
+
+            except Exception as e:
+                raise Exception(f"Error fetching order details for chunk: {futures[future]} - {e}")
+
+    return list_order_detail
