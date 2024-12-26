@@ -10,7 +10,7 @@ class UserAdAccountCredentialInformation(BaseMySQL):
     flag = Column('flag', Integer, default=1)
     token = Column('access_token', String(255))
     refresh_token = Column('refresh_token', String(255))
-    created_at = Column('latest_binding', DateTime, default=datetime.now())
+    created_at = Column('latest_binding', DateTime)
     updated_at = Column('latest_update_binding', DateTime, default=datetime.now())
     token_expiry = Column('token_expired_at', DateTime, default=datetime.now())
 

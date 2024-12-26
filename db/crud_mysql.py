@@ -86,6 +86,35 @@ def batch_update_user_credentials(db: Session, data: list):
     finally:
         db.close()
 
+def batch_update_user_credentials_by_userid_account_type(db: Session, data: list):
+    """
+    Batch update user credentials in the database.
+    :param db: Database session.
+    :param data: List of dictionaries containing update records with `id` and other fields.
+    """
+    if not data:
+        return
+
+    try:
+        # Generate bulk update statements
+        update_statements = [
+            sa.update(UserAdAccountCredentialInformation)
+            .where(UserAdAccountCredentialInformation.user_id == record["user_id"], UserAdAccountCredentialInformation.account_type == record["account_type"])
+            .values(**{key: value for key, value in record.items() if key != "user_id" or key != "account_type"})
+            for record in data
+        ]
+
+        # Execute all updates in a single transaction
+        for stmt in update_statements:
+            db.execute(stmt)
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise Exception(f"Error during batch update: {e}")
+    finally:
+        db.close()
+
 def get_all_access_tokens(db: Session):
     try:
         return db.execute(
@@ -131,6 +160,7 @@ def get_account_id_and_access_token_by_platform_id(db: Session, platform_id: int
         query = (
             sa.select(
                 UserAdAccountInformation.account_id,
+                AccountConfiguration.user_id,
                 active_tokens_subquery.c.token,
                 active_tokens_subquery.c.refresh_token,
             )

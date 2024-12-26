@@ -11,6 +11,7 @@ from tasks.tiktok_metrics_task import fetch_and_store_tiktok_metrics
 from tasks.tiktok_content_task import fetch_and_store_tiktok_ad_contents
 from tasks.google_ads_insights_task import fetch_and_store_google_ads_insights
 from tasks.google_ads_content import fetch_and_store_google_ads_content
+from tasks.shopee_orders_task import fetch_and_store_shopee_orders
 import asyncio
 
 async def main():
@@ -33,6 +34,7 @@ async def main():
 
       "refresh_shopee_token": refresh_shopee_token,
       "check_shopee_token_validity": check_shopee_token_validity,
+      "shopee_daily_orders": fetch_and_store_shopee_orders,
 
       "tiktok_daily": fetch_and_store_tiktok_metrics,
       "tiktok_content": fetch_and_store_tiktok_ad_contents,
